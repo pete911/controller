@@ -11,7 +11,6 @@ import (
 
 type Flags struct {
 	Kubeconfig string
-	Namespace  string
 	LogLevel   string
 	LogJson    bool
 }
@@ -34,7 +33,6 @@ func ParseFlags() Flags {
 	var flags Flags
 	f := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	f.StringVar(&flags.Kubeconfig, "kubeconfig", getStringEnv("KUBECONFIG", ""), "path to kubeconfig file, or empty for in-cluster kubeconfig")
-	f.StringVar(&flags.Namespace, "namespace", getStringEnv("CTRL_NAMESPACE", "kube-system"), "controller namespace")
 	f.StringVar(&flags.LogLevel, "log-level", getStringEnv("CTRL_LOG_LEVEL", "INFO"), "controller log level")
 	f.BoolVar(&flags.LogJson, "log-json", getBoolEnv("CTRL_LOG_JSON", true), "json log format")
 

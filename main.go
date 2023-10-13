@@ -6,7 +6,7 @@ import (
 	"github.com/pete911/controller/pkg"
 	"github.com/pete911/controller/pkg/handler"
 	"github.com/pete911/controller/pkg/k8s"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 	"log/slog"
 	"os"
 )
@@ -23,12 +23,17 @@ func main() {
 }
 
 func run(logger *slog.Logger, flags pkg.Flags) error {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", flags.Kubeconfig)
+	restConfig, err := rest.InClusterConfig()
 	if err != nil {
-		return fmt.Errorf("rest config from flags: %v", err)
+		return fmt.Errorf("rest in cluster config: %v", err)
 	}
 
-	podInformer, err := k8s.NewPodInformer(logger, restConfig, flags.Namespace)
+	namespace, err := getNamespace()
+	if err != nil {
+		return err
+	}
+
+	podInformer, err := k8s.NewPodInformer(logger, restConfig, "")
 	if err != nil {
 		return fmt.Errorf("new pod informer: %v", err)
 	}
@@ -38,7 +43,7 @@ func run(logger *slog.Logger, flags pkg.Flags) error {
 		return fmt.Errorf("add pod informer event handlers: %v", err)
 	}
 
-	leaderElection, err := k8s.NewLeaderElection(logger, restConfig, flags.Namespace)
+	leaderElection, err := k8s.NewLeaderElection(logger, restConfig, namespace)
 	if err != nil {
 		return fmt.Errorf("new leader election: %v", err)
 	}
@@ -47,4 +52,12 @@ func run(logger *slog.Logger, flags pkg.Flags) error {
 		return fmt.Errorf("leader election run: %v", err)
 	}
 	return nil
+}
+
+func getNamespace() (string, error) {
+	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return "", fmt.Errorf("get namespace: %w", err)
+	}
+	return string(ns), nil
 }
