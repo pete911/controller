@@ -43,7 +43,7 @@ func run(logger *slog.Logger, flags pkg.Flags) error {
 		return fmt.Errorf("new leader election: %v", err)
 	}
 
-	if err := leaderElection.Run(context.Background(), func(ctx context.Context) {}); err != nil {
+	if err := leaderElection.Run(context.Background(), func(ctx context.Context) { podInformer.Run(ctx.Done()) }); err != nil {
 		return fmt.Errorf("leader election run: %v", err)
 	}
 	return nil

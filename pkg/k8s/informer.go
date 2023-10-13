@@ -29,10 +29,10 @@ type PodInformer struct {
 	informer cache.SharedIndexInformer
 }
 
-func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace string) (PodInformer, error) {
+func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace string) (*PodInformer, error) {
 	dc, err := dynamic.NewForConfig(restConfig)
 	if err != nil {
-		return PodInformer{}, err
+		return nil, err
 	}
 
 	reSync := 60 * time.Second
@@ -40,7 +40,7 @@ func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace stri
 	resource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
 	informer := factory.ForResource(resource).Informer()
 
-	return PodInformer{
+	return &PodInformer{
 		logger:   logger.With("component", "informer"),
 		mux:      &sync.RWMutex{},
 		synced:   false,
@@ -48,40 +48,40 @@ func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace stri
 	}, nil
 }
 
-func (i PodInformer) AddEventHandlers(handler PodHandler) error {
+func (i *PodInformer) AddEventHandlers(handler PodHandler) error {
 	_, err := i.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			i.logger.Info("add event")
 			i.mux.RLock()
 			defer i.mux.RUnlock()
 			if !i.synced {
 				i.logger.Info("skip add event, informer is not synced")
 				return
 			}
+			i.logger.Info("handle add event")
 			if pod, ok := i.toPod(obj); ok {
 				handler.Add(pod)
 			}
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			i.logger.Info("update event")
 			i.mux.RLock()
 			defer i.mux.RUnlock()
 			if !i.synced {
 				i.logger.Info("skip update event, informer is not synced")
 				return
 			}
+			i.logger.Info("handle update event")
 			if oldPod, newPod, ok := i.toPods(oldObj, newObj); ok {
 				handler.Update(oldPod, newPod)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			i.logger.Info("delete event")
 			i.mux.RLock()
 			defer i.mux.RUnlock()
 			if !i.synced {
 				i.logger.Info("skip delete event, informer is not synced")
 				return
 			}
+			i.logger.Info("handle delete event")
 			if pod, ok := i.toPod(obj); ok {
 				handler.Delete(pod)
 			}
@@ -90,7 +90,7 @@ func (i PodInformer) AddEventHandlers(handler PodHandler) error {
 	return err
 }
 
-func (i PodInformer) toPod(obj interface{}) (v1.Pod, bool) {
+func (i *PodInformer) toPod(obj interface{}) (v1.Pod, bool) {
 	var pod v1.Pod
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, &pod); err != nil {
 		i.logger.Error(fmt.Sprintf("convert object to pod: %v", err))
@@ -99,7 +99,7 @@ func (i PodInformer) toPod(obj interface{}) (v1.Pod, bool) {
 	return pod, true
 }
 
-func (i PodInformer) toPods(oldObj, newObj interface{}) (v1.Pod, v1.Pod, bool) {
+func (i *PodInformer) toPods(oldObj, newObj interface{}) (v1.Pod, v1.Pod, bool) {
 	var oldPod, newPod v1.Pod
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(oldObj.(*unstructured.Unstructured).Object, &oldPod); err != nil {
 		i.logger.Error(fmt.Sprintf("convert old object to pod: %v", err))
@@ -112,9 +112,11 @@ func (i PodInformer) toPods(oldObj, newObj interface{}) (v1.Pod, v1.Pod, bool) {
 	return oldPod, newPod, true
 }
 
-func (i PodInformer) Run(stopCh <-chan struct{}) {
+func (i *PodInformer) Run(stopCh <-chan struct{}) {
 	go i.informer.Run(stopCh)
+	i.logger.Info("waiting for cache sync")
 	isSynced := cache.WaitForCacheSync(stopCh, i.informer.HasSynced)
+	i.logger.Info("cache synced")
 	i.mux.Lock()
 	i.synced = isSynced
 	i.mux.Unlock()

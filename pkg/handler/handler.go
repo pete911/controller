@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	v1 "k8s.io/api/core/v1"
 	"log/slog"
 )
@@ -16,13 +17,14 @@ func NewHandler(logger *slog.Logger) Handler {
 }
 
 func (h Handler) Add(pod v1.Pod) {
-	h.logger.Info("received pod add")
+	h.logger.Info(fmt.Sprintf("received pod add, ns %s name %s phase %s", pod.Namespace, pod.Name, pod.Status.Phase))
 }
 
 func (h Handler) Update(oldPod, newPod v1.Pod) {
-	h.logger.Info("received pod update")
+	h.logger.Info(fmt.Sprintf("received pod update, old ns %s name %s phase %s", oldPod.Namespace, oldPod.Name, oldPod.Status.Phase))
+	h.logger.Info(fmt.Sprintf("received pod update, new ns %s name %s phase %s", newPod.Namespace, newPod.Name, newPod.Status.Phase))
 }
 
 func (h Handler) Delete(pod v1.Pod) {
-	h.logger.Info("received pod delete")
+	h.logger.Info(fmt.Sprintf("received pod delete, ns %s name %s phase %s", pod.Namespace, pod.Name, pod.Status.Phase))
 }
