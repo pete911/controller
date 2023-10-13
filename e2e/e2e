@@ -1,0 +1,24 @@
+#!/bin/sh
+dir=$(dirname "$0")
+
+echo " --- [start cluster] ---"
+kind create cluster --wait 5m --name controller-test
+
+if [ "$(kubectl config current-context)" != "kind-controller-test" ]
+then
+  echo "kubectl context is not set to kind-controller-test"
+  exit 1
+fi
+
+# build and load controller docker image
+docker build -t pete911/controller:test "$dir"/..
+kind load docker-image pete911/controller:test --name controller-test
+
+# install controller chart
+helm install controller "$dir"/../charts/controller \
+  --namespace kube-system \
+  --set image=pete911/controller:test \
+  --wait
+
+echo "cluster is running, to delete cluster run"
+echo "kind delete cluster --name controller-test"

@@ -1,0 +1,10 @@
+apiVersion: v2
+home: https://github.com/pete911/controller
+version: 0.1.0
+name: controller
+description: Test kubernetes controller
+sources:
+  - https://github.com/pete911/controller/charts
+maintainers:
+  - name: peter reisinger
+    email: p.reisinger@gmail.com
