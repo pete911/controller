@@ -13,7 +13,7 @@ import (
 
 func main() {
 	flags := pkg.ParseFlags()
-	logger := pkg.NewLogger(flags.SlogLevel(), flags.LogJson)
+	logger := pkg.NewLogger(flags.SlogLevel())
 	logger.Info(fmt.Sprintf("starting controller with flags: %+v", flags))
 
 	if err := run(logger); err != nil {

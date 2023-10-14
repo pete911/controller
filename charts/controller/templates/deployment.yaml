@@ -28,6 +28,9 @@ spec:
       - name: {{ .Chart.Name }}
         image: {{ .Values.image }}
         imagePullPolicy: IfNotPresent
+        env:
+          - name: CTRL_LOG_LEVEL
+            value: {{ .Values.logLevel }}
         resources:
           limits:
             cpu: 150m
