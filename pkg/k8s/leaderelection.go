@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"log/slog"
@@ -20,17 +19,12 @@ type LeaderElection struct {
 	namespace string
 }
 
-func NewLeaderElection(logger *slog.Logger, restConfig *rest.Config, namespace string) (LeaderElection, error) {
-	cs, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return LeaderElection{}, err
-	}
-
+func NewLeaderElection(logger *slog.Logger, clientset *kubernetes.Clientset, namespace string) LeaderElection {
 	return LeaderElection{
 		logger:    logger.With("component", "leaderelection"),
-		client:    cs,
+		client:    clientset,
 		namespace: namespace,
-	}, nil
+	}
 }
 
 func (le LeaderElection) Run(ctx context.Context, fn func(ctx context.Context)) error {
