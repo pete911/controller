@@ -16,13 +16,13 @@ func main() {
 	logger := pkg.NewLogger(flags.SlogLevel(), flags.LogJson)
 	logger.Info(fmt.Sprintf("starting controller with flags: %+v", flags))
 
-	if err := run(logger, flags); err != nil {
+	if err := run(logger); err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, flags pkg.Flags) error {
+func run(logger *slog.Logger) error {
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("rest in cluster config: %v", err)

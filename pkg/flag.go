@@ -10,9 +10,8 @@ import (
 )
 
 type Flags struct {
-	Kubeconfig string
-	LogLevel   string
-	LogJson    bool
+	LogLevel string
+	LogJson  bool
 }
 
 func (f Flags) SlogLevel() slog.Level {
@@ -32,8 +31,7 @@ func (f Flags) SlogLevel() slog.Level {
 func ParseFlags() Flags {
 	var flags Flags
 	f := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	f.StringVar(&flags.Kubeconfig, "kubeconfig", getStringEnv("KUBECONFIG", ""), "path to kubeconfig file, or empty for in-cluster kubeconfig")
-	f.StringVar(&flags.LogLevel, "log-level", getStringEnv("CTRL_LOG_LEVEL", "INFO"), "controller log level")
+	f.StringVar(&flags.LogLevel, "log-level", getStringEnv("CTRL_LOG_LEVEL", "DEBUG"), "controller log level")
 	f.BoolVar(&flags.LogJson, "log-json", getBoolEnv("CTRL_LOG_JSON", true), "json log format")
 
 	if err := f.Parse(os.Args[1:]); err != nil {

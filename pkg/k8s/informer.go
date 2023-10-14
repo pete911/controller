@@ -17,9 +17,9 @@ import (
 )
 
 type PodHandler interface {
-	Add(pod v1.Pod)
-	Update(oldPod, newPod v1.Pod)
-	Delete(pod v1.Pod)
+	Add(pod v1.Pod) error
+	Update(oldPod, newPod v1.Pod) error
+	Delete(pod v1.Pod) error
 }
 
 type PodInformer struct {
@@ -51,43 +51,46 @@ func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace stri
 func (i *PodInformer) AddEventHandlers(handler PodHandler) error {
 	_, err := i.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			i.mux.RLock()
-			defer i.mux.RUnlock()
-			if !i.synced {
-				i.logger.Info("skip add event, informer is not synced")
-				return
-			}
-			i.logger.Info("handle add event")
-			if pod, ok := i.toPod(obj); ok {
-				handler.Add(pod)
-			}
+			i.handlePodEvent("add", obj, handler.Delete)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			i.mux.RLock()
-			defer i.mux.RUnlock()
-			if !i.synced {
-				i.logger.Info("skip update event, informer is not synced")
-				return
-			}
-			i.logger.Info("handle update event")
-			if oldPod, newPod, ok := i.toPods(oldObj, newObj); ok {
-				handler.Update(oldPod, newPod)
-			}
+			i.handlePodsEvent("update", oldObj, newObj, handler.Update)
 		},
 		DeleteFunc: func(obj interface{}) {
-			i.mux.RLock()
-			defer i.mux.RUnlock()
-			if !i.synced {
-				i.logger.Info("skip delete event, informer is not synced")
-				return
-			}
-			i.logger.Info("handle delete event")
-			if pod, ok := i.toPod(obj); ok {
-				handler.Delete(pod)
-			}
+			i.handlePodEvent("delete", obj, handler.Delete)
 		},
 	})
 	return err
+}
+
+func (i *PodInformer) handlePodEvent(name string, obj interface{}, fn func(pod v1.Pod) error) {
+	i.mux.RLock()
+	defer i.mux.RUnlock()
+	if !i.synced {
+		i.logger.Debug(fmt.Sprintf("skip %s event, informer is not synced", name))
+		return
+	}
+	i.logger.Debug(fmt.Sprintf("handle %s event", name))
+	if pod, ok := i.toPod(obj); ok {
+		if err := fn(pod); err != nil {
+			i.logger.Error(fmt.Sprintf("%s event: %v", name, err))
+		}
+	}
+}
+
+func (i *PodInformer) handlePodsEvent(name string, oldObj, newObj interface{}, fn func(oldPod, newPod v1.Pod) error) {
+	i.mux.RLock()
+	defer i.mux.RUnlock()
+	if !i.synced {
+		i.logger.Debug(fmt.Sprintf("skip %s event, informer is not synced", name))
+		return
+	}
+	i.logger.Debug("handle update event")
+	if oldPod, newPod, ok := i.toPods(oldObj, newObj); ok {
+		if err := fn(oldPod, newPod); err != nil {
+			i.logger.Error(fmt.Sprintf("%s event: %v", name, err))
+		}
+	}
 }
 
 func (i *PodInformer) toPod(obj interface{}) (v1.Pod, bool) {
