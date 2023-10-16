@@ -116,6 +116,7 @@ func (c *PodController) processNextItem() bool {
 	if quit {
 		return false
 	}
+	// done has to be called when we finished processing the item
 	defer c.queue.Done(key)
 
 	if err := c.processItem(key.(string)); err != nil {
@@ -124,10 +125,10 @@ func (c *PodController) processNextItem() bool {
 			c.logger.Error(fmt.Sprintf("queue retries %d (max retries %d)", retries, c.maxQueueRetries))
 			return true
 		}
-		c.queue.Forget(key)
 		c.logger.Error(fmt.Sprintf("process %s: %v", key, err))
 	}
 
+	// forget is called if we don't need to retry (number of retries has been exceeded, or we processed successfully)
 	c.queue.Forget(key)
 	return true
 }
