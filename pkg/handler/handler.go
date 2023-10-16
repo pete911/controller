@@ -16,8 +16,8 @@ func NewHandler(logger *slog.Logger) Handler {
 	}
 }
 
-func (h Handler) AddUpdate(pod *v1.Pod) error {
-	h.logger.Info(fmt.Sprintf("received pod add/update, ns %s name %s phase %s", pod.Namespace, pod.Name, pod.Status.Phase))
+func (h Handler) AddUpdate(key string, pod v1.Pod) error {
+	h.logger.Info(fmt.Sprintf("received pod add/update %s, ns %s name %s phase %s", key, pod.Namespace, pod.Name, pod.Status.Phase))
 	return nil
 }
 

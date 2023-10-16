@@ -16,7 +16,7 @@ import (
 )
 
 type PodHandler interface {
-	AddUpdate(pod *v1.Pod) error
+	AddUpdate(key string, pod v1.Pod) error
 	Delete(key string) error
 }
 
@@ -133,6 +133,7 @@ func (c *PodController) processNextItem() bool {
 }
 
 func (c *PodController) processItem(key string) error {
+	var pod v1.Pod
 	obj, exists, err := c.informer.GetIndexer().GetByKey(key)
 	if err != nil {
 		return fmt.Errorf("get object by key %s from store: %w", key, err)
@@ -140,5 +141,8 @@ func (c *PodController) processItem(key string) error {
 	if !exists {
 		return c.handler.Delete(key)
 	}
-	return c.handler.AddUpdate(obj.(*v1.Pod))
+	if obj != nil {
+		pod = *obj.(*v1.Pod)
+	}
+	return c.handler.AddUpdate(key, pod)
 }
