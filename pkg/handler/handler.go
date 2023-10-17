@@ -16,18 +16,17 @@ func NewHandler(logger *slog.Logger) Handler {
 	}
 }
 
-func (h Handler) Add(pod v1.Pod) error {
-	h.logger.Info(fmt.Sprintf("received pod add, ns %s name %s phase %s", pod.Namespace, pod.Name, pod.Status.Phase))
+func (h Handler) AddUpdate(key string, pod v1.Pod) error {
+	if pod.Status.PodIP == "" {
+		h.logger.Debug(fmt.Sprintf("pod %s in phase %s does not have IP, skipping", key, pod.Status.Phase))
+		return nil
+	}
+
+	h.logger.Info(fmt.Sprintf("received pod add/update %s, ns %s name %s phase %s", key, pod.Namespace, pod.Name, pod.Status.Phase))
 	return nil
 }
 
-func (h Handler) Update(oldPod, newPod v1.Pod) error {
-	h.logger.Info(fmt.Sprintf("received pod update, old ns %s name %s phase %s", oldPod.Namespace, oldPod.Name, oldPod.Status.Phase))
-	h.logger.Info(fmt.Sprintf("received pod update, new ns %s name %s phase %s", newPod.Namespace, newPod.Name, newPod.Status.Phase))
-	return nil
-}
-
-func (h Handler) Delete(pod v1.Pod) error {
-	h.logger.Info(fmt.Sprintf("received pod delete, ns %s name %s phase %s", pod.Namespace, pod.Name, pod.Status.Phase))
+func (h Handler) Delete(key string) error {
+	h.logger.Info(fmt.Sprintf("received pod delete %s", key))
 	return nil
 }

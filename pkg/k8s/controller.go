@@ -1,131 +1,106 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
-	"k8s.io/client-go/rest"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"log/slog"
-	"os"
-	"sync"
 	"time"
 )
 
-type PodHandler interface {
-	Add(pod v1.Pod) error
-	Update(oldPod, newPod v1.Pod) error
-	Delete(pod v1.Pod) error
-}
+const reSyncInformer time.Duration = 0
 
 type PodController struct {
 	logger   *slog.Logger
-	mux      *sync.RWMutex
-	synced   bool
+	queue    workqueue.RateLimitingInterface
 	informer cache.SharedIndexInformer
+	worker   *podWorker
 }
 
-func NewPodInformer(logger *slog.Logger, restConfig *rest.Config, namespace string) (*PodController, error) {
-	dc, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		return nil, err
-	}
+func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, namespace string, handler PodHandler) (*PodController, error) {
+	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
+	informer := newPodInformer(clientset, namespace)
+	processor := newPodWorker(logger, queue, informer.GetIndexer(), handler)
 
-	reSync := 60 * time.Second
-	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dc, reSync, namespace, nil)
-	resource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-	informer := factory.ForResource(resource).Informer()
-
-	return &PodController{
-		logger:   logger.With("component", "informer"),
-		mux:      &sync.RWMutex{},
-		synced:   false,
+	controller := &PodController{
+		logger:   logger.With("component", "controller"),
+		queue:    queue,
 		informer: informer,
-	}, nil
+		worker:   processor,
+	}
+	if err := controller.addEventHandlers(); err != nil {
+		return nil, fmt.Errorf("add event handlers: %w", err)
+	}
+	return controller, nil
 }
 
-func (c *PodController) AddEventHandlers(handler PodHandler) error {
+func newPodInformer(clientset *kubernetes.Clientset, namespace string) cache.SharedIndexInformer {
+	return cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+				return clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+			},
+			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				return clientset.CoreV1().Pods(namespace).Watch(context.Background(), metav1.ListOptions{})
+			},
+		},
+		&v1.Pod{},
+		reSyncInformer,
+		cache.Indexers{},
+	)
+}
+
+func (c *PodController) addEventHandlers() error {
 	_, err := c.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			c.handlePodEvent("add", obj, handler.Delete)
+			key, err := cache.MetaNamespaceKeyFunc(obj)
+			if err != nil {
+				c.logger.Error(fmt.Sprintf("handle add event: meta namespace key func: %v", err))
+				return
+			}
+			c.logger.Debug(fmt.Sprintf("add event %s added to queue", key))
+			c.queue.Add(key)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			c.handlePodsEvent("update", oldObj, newObj, handler.Update)
+			key, err := cache.MetaNamespaceKeyFunc(newObj)
+			if err != nil {
+				c.logger.Error(fmt.Sprintf("handle update event: meta namespace key func: %v", err))
+				return
+			}
+			c.logger.Debug(fmt.Sprintf("update event %s added to queue", key))
+			c.queue.Add(key)
 		},
 		DeleteFunc: func(obj interface{}) {
-			c.handlePodEvent("delete", obj, handler.Delete)
+			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+			if err != nil {
+				c.logger.Error(fmt.Sprintf("handle delete event: meta namespace key func: %v", err))
+				return
+			}
+			c.logger.Debug(fmt.Sprintf("delete event %s added to queue", key))
+			c.queue.Add(key)
 		},
 	})
 	return err
 }
 
-func (c *PodController) handlePodEvent(name string, obj interface{}, fn func(pod v1.Pod) error) {
-	c.mux.RLock()
-	defer c.mux.RUnlock()
-	if !c.synced {
-		c.logger.Debug(fmt.Sprintf("skip %s event, informer is not synced", name))
-		return
-	}
-	c.logger.Debug(fmt.Sprintf("handle %s event", name))
-	if pod, ok := c.toPod(obj); ok {
-		if err := fn(pod); err != nil {
-			c.logger.Error(fmt.Sprintf("%s event: %v", name, err))
-		}
-	}
-}
-
-func (c *PodController) handlePodsEvent(name string, oldObj, newObj interface{}, fn func(oldPod, newPod v1.Pod) error) {
-	c.mux.RLock()
-	defer c.mux.RUnlock()
-	if !c.synced {
-		c.logger.Debug(fmt.Sprintf("skip %s event, informer is not synced", name))
-		return
-	}
-	c.logger.Debug("handle update event")
-	if oldPod, newPod, ok := c.toPods(oldObj, newObj); ok {
-		if err := fn(oldPod, newPod); err != nil {
-			c.logger.Error(fmt.Sprintf("%s event: %v", name, err))
-		}
-	}
-}
-
-func (c *PodController) toPod(obj interface{}) (v1.Pod, bool) {
-	var pod v1.Pod
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, &pod); err != nil {
-		c.logger.Error(fmt.Sprintf("convert object to pod: %v", err))
-		return v1.Pod{}, false
-	}
-	return pod, true
-}
-
-func (c *PodController) toPods(oldObj, newObj interface{}) (v1.Pod, v1.Pod, bool) {
-	var oldPod, newPod v1.Pod
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(oldObj.(*unstructured.Unstructured).Object, &oldPod); err != nil {
-		c.logger.Error(fmt.Sprintf("convert old object to pod: %v", err))
-		return v1.Pod{}, v1.Pod{}, false
-	}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(newObj.(*unstructured.Unstructured).Object, &newPod); err != nil {
-		c.logger.Error(fmt.Sprintf("convert new object to pod: %v", err))
-		return v1.Pod{}, v1.Pod{}, false
-	}
-	return oldPod, newPod, true
-}
-
 func (c *PodController) Run(stopCh <-chan struct{}) {
+	c.logger.Info("starting controller")
+	defer c.queue.ShutDown()
 	go c.informer.Run(stopCh)
+
 	c.logger.Info("waiting for cache sync")
-	isSynced := cache.WaitForCacheSync(stopCh, c.informer.HasSynced)
-	c.logger.Info("cache synced")
-	c.mux.Lock()
-	c.synced = isSynced
-	c.mux.Unlock()
-	if !isSynced {
+	if !cache.WaitForCacheSync(stopCh, c.informer.HasSynced) {
 		c.logger.Error("failed to sync")
-		os.Exit(1)
+		return
 	}
-	<-stopCh
+	c.logger.Info("cache synced")
+	c.logger.Info("starting controller worker")
+	wait.Until(c.worker.run, time.Second, stopCh)
 }
