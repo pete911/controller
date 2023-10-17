@@ -15,26 +15,25 @@ import (
 	"time"
 )
 
-type PodHandler interface {
-	AddUpdate(key string, pod v1.Pod) error
-	Delete(key string) error
-}
+const reSyncInformer time.Duration = 0
 
 type PodController struct {
-	logger          *slog.Logger
-	queue           workqueue.RateLimitingInterface
-	informer        cache.SharedIndexInformer
-	handler         PodHandler
-	maxQueueRetries int
+	logger   *slog.Logger
+	queue    workqueue.RateLimitingInterface
+	informer cache.SharedIndexInformer
+	worker   *podWorker
 }
 
-func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, handler PodHandler) (*PodController, error) {
+func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, namespace string, handler PodHandler) (*PodController, error) {
+	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
+	informer := newPodInformer(clientset, namespace)
+	processor := newPodWorker(logger, queue, informer.GetIndexer(), handler)
+
 	controller := &PodController{
-		logger:          logger.With("component", "controller"),
-		queue:           workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		informer:        newPodInformer(clientset),
-		handler:         handler,
-		maxQueueRetries: 3,
+		logger:   logger.With("component", "controller"),
+		queue:    queue,
+		informer: informer,
+		worker:   processor,
 	}
 	if err := controller.addEventHandlers(); err != nil {
 		return nil, fmt.Errorf("add event handlers: %w", err)
@@ -42,19 +41,18 @@ func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, hand
 	return controller, nil
 }
 
-func newPodInformer(clientset *kubernetes.Clientset) cache.SharedIndexInformer {
-	reSync := 60 * time.Second
+func newPodInformer(clientset *kubernetes.Clientset, namespace string) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return clientset.CoreV1().Pods(v1.NamespaceAll).List(context.Background(), metav1.ListOptions{})
+				return clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				return clientset.CoreV1().Pods(v1.NamespaceAll).Watch(context.Background(), metav1.ListOptions{})
+				return clientset.CoreV1().Pods(namespace).Watch(context.Background(), metav1.ListOptions{})
 			},
 		},
 		&v1.Pod{},
-		reSync,
+		reSyncInformer,
 		cache.Indexers{},
 	)
 }
@@ -67,7 +65,7 @@ func (c *PodController) addEventHandlers() error {
 				c.logger.Error(fmt.Sprintf("handle add event: meta namespace key func: %v", err))
 				return
 			}
-			c.logger.Info(fmt.Sprintf("add event %s added to queue", key))
+			c.logger.Debug(fmt.Sprintf("add event %s added to queue", key))
 			c.queue.Add(key)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
@@ -76,7 +74,7 @@ func (c *PodController) addEventHandlers() error {
 				c.logger.Error(fmt.Sprintf("handle update event: meta namespace key func: %v", err))
 				return
 			}
-			c.logger.Info(fmt.Sprintf("update event %s added to queue", key))
+			c.logger.Debug(fmt.Sprintf("update event %s added to queue", key))
 			c.queue.Add(key)
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -85,7 +83,7 @@ func (c *PodController) addEventHandlers() error {
 				c.logger.Error(fmt.Sprintf("handle delete event: meta namespace key func: %v", err))
 				return
 			}
-			c.logger.Info(fmt.Sprintf("delete event %s added to queue", key))
+			c.logger.Debug(fmt.Sprintf("delete event %s added to queue", key))
 			c.queue.Add(key)
 		},
 	})
@@ -93,8 +91,8 @@ func (c *PodController) addEventHandlers() error {
 }
 
 func (c *PodController) Run(stopCh <-chan struct{}) {
-	defer c.queue.ShutDown()
 	c.logger.Info("starting controller")
+	defer c.queue.ShutDown()
 	go c.informer.Run(stopCh)
 
 	c.logger.Info("waiting for cache sync")
@@ -103,47 +101,6 @@ func (c *PodController) Run(stopCh <-chan struct{}) {
 		return
 	}
 	c.logger.Info("cache synced")
-	wait.Until(c.runWorker, time.Second, stopCh)
-}
-
-func (c *PodController) runWorker() {
-	for c.processNextItem() {
-	}
-}
-
-func (c *PodController) processNextItem() bool {
-	key, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	// done has to be called when we finished processing the item
-	defer c.queue.Done(key)
-
-	if err := c.processItem(key.(string)); err != nil {
-		retries := c.queue.NumRequeues(key)
-		if retries < c.maxQueueRetries {
-			c.logger.Error(fmt.Sprintf("queue retries %d (max retries %d)", retries, c.maxQueueRetries))
-			return true
-		}
-		c.logger.Error(fmt.Sprintf("process %s: %v", key, err))
-	}
-
-	// forget is called if we don't need to retry (number of retries has been exceeded, or we processed successfully)
-	c.queue.Forget(key)
-	return true
-}
-
-func (c *PodController) processItem(key string) error {
-	var pod v1.Pod
-	obj, exists, err := c.informer.GetIndexer().GetByKey(key)
-	if err != nil {
-		return fmt.Errorf("get object by key %s from store: %w", key, err)
-	}
-	if !exists {
-		return c.handler.Delete(key)
-	}
-	if obj != nil {
-		pod = *obj.(*v1.Pod)
-	}
-	return c.handler.AddUpdate(key, pod)
+	c.logger.Info("starting controller worker")
+	wait.Until(c.worker.run, time.Second, stopCh)
 }

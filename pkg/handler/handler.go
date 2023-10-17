@@ -17,6 +17,11 @@ func NewHandler(logger *slog.Logger) Handler {
 }
 
 func (h Handler) AddUpdate(key string, pod v1.Pod) error {
+	if pod.Status.PodIP == "" {
+		h.logger.Debug(fmt.Sprintf("pod %s in phase %s does not have IP, skipping", key, pod.Status.Phase))
+		return nil
+	}
+
 	h.logger.Info(fmt.Sprintf("received pod add/update %s, ns %s name %s phase %s", key, pod.Namespace, pod.Name, pod.Status.Phase))
 	return nil
 }

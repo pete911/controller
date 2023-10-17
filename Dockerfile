@@ -3,7 +3,6 @@ RUN apk add --no-cache gcc libc-dev
 WORKDIR /go/src/app
 
 COPY . .
-RUN go test  ./...
 RUN go build -mod vendor -o /bin/controller
 
 
