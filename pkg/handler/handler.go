@@ -40,6 +40,15 @@ func (h *Handler) AddUpdate(key string, pod v1.Pod) error {
 		return nil
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			// recover just in case channel has been already closed. this should not happen though, events are
+			// received from the queue in sequence, if the add/update is blocked (channel is full), we should not
+			// be able to receive delete, hence close channel
+			h.logger.Error(fmt.Sprintf("recovereed add/update %s key: %v", key, r))
+		}
+	}()
+
 	h.logger.Info(fmt.Sprintf("received pod add/update %s phase %s IP %s", key, pod.Status.Phase, pod.Status.PodIP))
 	h.getPodChannel(key) <- NewPodEvent(key, pod)
 	return nil
