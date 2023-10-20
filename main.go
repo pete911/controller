@@ -9,6 +9,8 @@ import (
 	"k8s.io/client-go/rest"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -23,9 +25,6 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("rest in cluster config: %v", err)
@@ -41,6 +40,20 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("new pod informer: %v", err)
 	}
 
-	podController.Run(stopCh)
+	podController.Run(getStopCh(logger))
+	logger.Info("controller stopped")
 	return nil
+}
+
+func getStopCh(logger *slog.Logger) <-chan struct{} {
+	stopCh := make(chan struct{})
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		logger.Debug("listening for SIGINT and SIGTERM")
+		s := <-sigCh
+		logger.Info(fmt.Sprintf("received %s signal, stopping", s))
+		close(stopCh)
+	}()
+	return stopCh
 }

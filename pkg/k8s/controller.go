@@ -6,7 +6,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -92,8 +91,12 @@ func (c *PodController) addEventHandlers() error {
 
 func (c *PodController) Run(stopCh <-chan struct{}) {
 	c.logger.Info("starting controller")
-	defer c.queue.ShutDown()
-	go c.informer.Run(stopCh)
+	go func() {
+		c.informer.Run(stopCh)
+		c.logger.Info("informer stopped")
+		c.queue.ShutDown()
+		c.logger.Info("queue shut down")
+	}()
 
 	c.logger.Info("waiting for cache sync")
 	if !cache.WaitForCacheSync(stopCh, c.informer.HasSynced) {
@@ -102,5 +105,6 @@ func (c *PodController) Run(stopCh <-chan struct{}) {
 	}
 	c.logger.Info("cache synced")
 	c.logger.Info("starting controller worker")
-	wait.Until(c.worker.run, time.Second, stopCh)
+	c.worker.run()
+	c.logger.Info("controller worker stopped")
 }

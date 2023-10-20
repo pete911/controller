@@ -41,6 +41,7 @@ func (w *podWorker) run() {
 func (w *podWorker) processNextItem() bool {
 	key, shutdown := w.queue.Get()
 	if shutdown {
+		w.logger.Info("received queue shut down")
 		return false
 	}
 	// done has to be called when we finished processing the item
