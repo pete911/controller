@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const reSyncInformer time.Duration = 0
+const (
+	reSyncInformer time.Duration = 0
+	annotationKey                = "controller"
+)
 
 type PodController struct {
 	logger   *slog.Logger
@@ -64,6 +67,10 @@ func (c *PodController) addEventHandlers() error {
 				c.logger.Error(fmt.Sprintf("handle add event: meta namespace key func: %v", err))
 				return
 			}
+			if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
+				c.logger.Debug(fmt.Sprintf("add event %s does not have %s annotation, skipping", key, annotationKey))
+				return
+			}
 			c.logger.Debug(fmt.Sprintf("add event %s added to queue", key))
 			c.queue.Add(key)
 		},
@@ -73,6 +80,10 @@ func (c *PodController) addEventHandlers() error {
 				c.logger.Error(fmt.Sprintf("handle update event: meta namespace key func: %v", err))
 				return
 			}
+			if _, ok := toPod(newObj).Annotations[annotationKey]; !ok {
+				c.logger.Debug(fmt.Sprintf("update event %s does not have %s annotation, skipping", key, annotationKey))
+				return
+			}
 			c.logger.Debug(fmt.Sprintf("update event %s added to queue", key))
 			c.queue.Add(key)
 		},
@@ -80,6 +91,10 @@ func (c *PodController) addEventHandlers() error {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err != nil {
 				c.logger.Error(fmt.Sprintf("handle delete event: meta namespace key func: %v", err))
+				return
+			}
+			if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
+				c.logger.Debug(fmt.Sprintf("delete event %s does not have %s annotation, skipping", key, annotationKey))
 				return
 			}
 			c.logger.Debug(fmt.Sprintf("delete event %s added to queue", key))
@@ -107,4 +122,11 @@ func (c *PodController) Run(stopCh <-chan struct{}) {
 	c.logger.Info("starting controller worker")
 	c.worker.run()
 	c.logger.Info("controller worker stopped")
+}
+
+func toPod(obj interface{}) v1.Pod {
+	if obj == nil {
+		return v1.Pod{}
+	}
+	return *obj.(*v1.Pod)
 }

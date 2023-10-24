@@ -34,7 +34,7 @@ func NewHandler(logger *slog.Logger) *Handler {
 	return h
 }
 
-func (h *Handler) AddUpdate(key string, pod v1.Pod) error {
+func (h *Handler) AddOrUpdate(key string, pod v1.Pod) error {
 	if pod.Status.PodIP == "" {
 		h.logger.Debug(fmt.Sprintf("pod %s in phase %s does not have IP, skipping", key, pod.Status.Phase))
 		return nil
@@ -90,12 +90,14 @@ func (h *Handler) newPodChannel(key string) chan<- PodEvent {
 	events := make(chan PodEvent, podChannelBuff)
 	go func() {
 		for e := range events {
-			h.logger.Info(fmt.Sprintf("got pod event %s IP %s", e.Key, e.IP))
+			h.logger.Info(fmt.Sprintf("processing pod event %s IP %s", e.Key, e.IP))
 			time.Sleep(1 * time.Second) // pretend that we are doing some work on pod add/update
+			h.logger.Info(fmt.Sprintf("processed pod event %s IP %s", e.Key, e.IP))
 		}
 		// channel closed, pod has been deleted
+		h.logger.Info(fmt.Sprintf("processing delete pod event %s", key))
 		time.Sleep(1 * time.Second) // pretend that we are doing some work on pod delete
-		h.logger.Debug(fmt.Sprintf("finished processing %s events", key))
+		h.logger.Info(fmt.Sprintf("processed delete pod event %s", key))
 	}()
 	return events
 }
