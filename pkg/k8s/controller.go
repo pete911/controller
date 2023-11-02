@@ -19,31 +19,36 @@ const (
 	annotationKey                = "controller"
 )
 
+type podWorker interface {
+	run(queue workqueue.RateLimitingInterface, indexer cache.KeyGetter)
+}
+
 type PodController struct {
 	logger   *slog.Logger
 	queue    workqueue.RateLimitingInterface
 	informer cache.SharedIndexInformer
-	worker   *podWorker
+	worker   podWorker
 }
 
 func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, namespace string, handler PodHandler) (*PodController, error) {
-	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-	informer := newPodInformer(clientset, namespace)
-	processor := newPodWorker(logger, queue, informer.GetIndexer(), handler)
-
 	controller := &PodController{
 		logger:   logger.With("component", "controller"),
-		queue:    queue,
-		informer: informer,
-		worker:   processor,
+		queue:    workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		informer: newPodInformer(clientset, namespace, reSyncInformer),
+		worker:   newWorker(logger, handler),
 	}
-	if err := controller.addEventHandlers(); err != nil {
+
+	if _, err := controller.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    controller.addFunc,
+		UpdateFunc: controller.updateFunc,
+		DeleteFunc: controller.deleteFunc,
+	}); err != nil {
 		return nil, fmt.Errorf("add event handlers: %w", err)
 	}
 	return controller, nil
 }
 
-func newPodInformer(clientset *kubernetes.Clientset, namespace string) cache.SharedIndexInformer {
+func newPodInformer(clientset *kubernetes.Clientset, namespace string, resyncPeriod time.Duration) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -54,54 +59,51 @@ func newPodInformer(clientset *kubernetes.Clientset, namespace string) cache.Sha
 			},
 		},
 		&v1.Pod{},
-		reSyncInformer,
+		resyncPeriod,
 		cache.Indexers{},
 	)
 }
 
-func (c *PodController) addEventHandlers() error {
-	_, err := c.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			key, err := cache.MetaNamespaceKeyFunc(obj)
-			if err != nil {
-				c.logger.Error(fmt.Sprintf("handle add event: meta namespace key func: %v", err))
-				return
-			}
-			if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
-				c.logger.Debug(fmt.Sprintf("add event %s does not have %s annotation, skipping", key, annotationKey))
-				return
-			}
-			c.logger.Debug(fmt.Sprintf("add event %s added to queue", key))
-			c.queue.Add(key)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			key, err := cache.MetaNamespaceKeyFunc(newObj)
-			if err != nil {
-				c.logger.Error(fmt.Sprintf("handle update event: meta namespace key func: %v", err))
-				return
-			}
-			if _, ok := toPod(newObj).Annotations[annotationKey]; !ok {
-				c.logger.Debug(fmt.Sprintf("update event %s does not have %s annotation, skipping", key, annotationKey))
-				return
-			}
-			c.logger.Debug(fmt.Sprintf("update event %s added to queue", key))
-			c.queue.Add(key)
-		},
-		DeleteFunc: func(obj interface{}) {
-			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			if err != nil {
-				c.logger.Error(fmt.Sprintf("handle delete event: meta namespace key func: %v", err))
-				return
-			}
-			if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
-				c.logger.Debug(fmt.Sprintf("delete event %s does not have %s annotation, skipping", key, annotationKey))
-				return
-			}
-			c.logger.Debug(fmt.Sprintf("delete event %s added to queue", key))
-			c.queue.Add(key)
-		},
-	})
-	return err
+func (c *PodController) addFunc(obj interface{}) {
+	key, err := cache.MetaNamespaceKeyFunc(obj)
+	if err != nil {
+		c.logger.Error(fmt.Sprintf("handle add event: meta namespace key func: %v", err))
+		return
+	}
+	if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
+		c.logger.Debug(fmt.Sprintf("add event %s does not have %s annotation, skipping", key, annotationKey))
+		return
+	}
+	c.logger.Debug(fmt.Sprintf("add event %s added to queue", key))
+	c.queue.Add(key)
+}
+
+func (c *PodController) updateFunc(oldObj, newObj interface{}) {
+	key, err := cache.MetaNamespaceKeyFunc(newObj)
+	if err != nil {
+		c.logger.Error(fmt.Sprintf("handle update event: meta namespace key func: %v", err))
+		return
+	}
+	if _, ok := toPod(newObj).Annotations[annotationKey]; !ok {
+		c.logger.Debug(fmt.Sprintf("update event %s does not have %s annotation, skipping", key, annotationKey))
+		return
+	}
+	c.logger.Debug(fmt.Sprintf("update event %s added to queue", key))
+	c.queue.Add(key)
+}
+
+func (c *PodController) deleteFunc(obj interface{}) {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		c.logger.Error(fmt.Sprintf("handle delete event: meta namespace key func: %v", err))
+		return
+	}
+	if _, ok := toPod(obj).Annotations[annotationKey]; !ok {
+		c.logger.Debug(fmt.Sprintf("delete event %s does not have %s annotation, skipping", key, annotationKey))
+		return
+	}
+	c.logger.Debug(fmt.Sprintf("delete event %s added to queue", key))
+	c.queue.Add(key)
 }
 
 func (c *PodController) Run(stopCh <-chan struct{}) {
@@ -120,7 +122,7 @@ func (c *PodController) Run(stopCh <-chan struct{}) {
 	}
 	c.logger.Info("cache synced")
 	c.logger.Info("starting controller worker")
-	c.worker.run()
+	c.worker.run(c.queue, c.informer.GetIndexer())
 	c.logger.Info("controller worker stopped")
 }
 
