@@ -25,14 +25,14 @@ func (h *Handler) AddOrUpdate(key string, pod v1.Pod) error {
 	}
 
 	h.logger.Info(fmt.Sprintf("processing pod event %s IP %s", key, pod.Status.PodIP))
-	time.Sleep(1 * time.Second) // pretend that we are doing some work on pod add/update
+	time.Sleep(5 * time.Second) // pretend that we are doing some work on pod add/update
 	h.logger.Info(fmt.Sprintf("processed pod event %s IP %s", key, pod.Status.PodIP))
 	return nil
 }
 
 func (h *Handler) Delete(key string) error {
 	h.logger.Info(fmt.Sprintf("processing delete pod event %s", key))
-	time.Sleep(1 * time.Second) // pretend that we are doing some work on pod delete
+	time.Sleep(5 * time.Second) // pretend that we are doing some work on pod delete
 	h.logger.Info(fmt.Sprintf("processed delete pod event %s", key))
 	return nil
 }
