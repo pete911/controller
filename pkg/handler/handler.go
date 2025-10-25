@@ -2,9 +2,10 @@ package handler
 
 import (
 	"fmt"
-	v1 "k8s.io/api/core/v1"
 	"log/slog"
 	"time"
+
+	v1 "k8s.io/api/core/v1"
 )
 
 type Handler struct {

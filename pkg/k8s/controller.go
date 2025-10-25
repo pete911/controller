@@ -3,6 +3,9 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
+
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -10,8 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
-	"log/slog"
-	"time"
 )
 
 const (
@@ -20,12 +21,12 @@ const (
 )
 
 type podWorker interface {
-	run(queue workqueue.RateLimitingInterface, indexer cache.KeyGetter)
+	run(queue workqueue.TypedRateLimitingInterface[any], indexer cache.KeyGetter)
 }
 
 type PodController struct {
 	logger   *slog.Logger
-	queue    workqueue.RateLimitingInterface
+	queue    workqueue.TypedRateLimitingInterface[any]
 	informer cache.SharedIndexInformer
 	worker   podWorker
 }
@@ -33,7 +34,7 @@ type PodController struct {
 func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, namespace string, handler PodHandler) (*PodController, error) {
 	controller := &PodController{
 		logger:   logger.With("component", "controller"),
-		queue:    workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		queue:    workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[any]()),
 		informer: newPodInformer(clientset, namespace, reSyncInformer),
 		worker:   newWorker(logger, handler),
 	}
@@ -51,10 +52,10 @@ func NewPodController(logger *slog.Logger, clientset *kubernetes.Clientset, name
 func newPodInformer(clientset *kubernetes.Clientset, namespace string, resyncPeriod time.Duration) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 				return clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
 			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 				return clientset.CoreV1().Pods(namespace).Watch(context.Background(), metav1.ListOptions{})
 			},
 		},

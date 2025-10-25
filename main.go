@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/pete911/controller/pkg"
 	"github.com/pete911/controller/pkg/handler"
 	"github.com/pete911/controller/pkg/k8s"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
 func main() {
