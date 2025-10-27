@@ -1,4 +1,4 @@
 # controller
 
-Simple kubernetes controller example. Controller just logs events of pods that have `controller` annotation
-(value of this annotation can be set to anything).
+Simple kubernetes controllers example. `controller` package is generic, user just needs to create new `handler`.
+Currently, there are 2 examples of handler, one for pod and one for custom objects.

@@ -8,8 +8,9 @@ import (
 	"syscall"
 
 	"github.com/pete911/controller/pkg"
+	"github.com/pete911/controller/pkg/controller"
 	"github.com/pete911/controller/pkg/handler"
-	"github.com/pete911/controller/pkg/k8s"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -30,20 +31,43 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("rest in cluster config: %v", err)
 	}
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err := startPodController(logger, restConfig); err != nil {
+		logger.Error(err.Error())
+	}
+	return nil
+}
+
+func startPodController(logger *slog.Logger, cfg *rest.Config) error {
+	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("clientset for config: %v", err)
 	}
 
-	podHandler := handler.NewHandler(logger)
-	podController, err := k8s.NewPodController(logger, clientset, "", podHandler)
+	h := handler.NewPod(logger, client)
+	ctrl, err := controller.NewController(logger, h)
 	if err != nil {
-		return fmt.Errorf("new pod informer: %v", err)
+		return fmt.Errorf("new pod controller: %v", err)
 	}
 
-	podController.Run(getStopCh(logger))
-	logger.Info("controller stopped")
-	return nil
+	ctrl.Run(getStopCh(logger))
+	return fmt.Errorf("pod controller stopped")
+}
+
+// example of controller for custom objects (CRDs)
+func startEndpointSvcController(logger *slog.Logger, cfg *rest.Config) error {
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("clientset for config: %v", err)
+	}
+
+	h := handler.NewEndpointSvc(logger, client)
+	ctrl, err := controller.NewController(logger, h)
+	if err != nil {
+		return fmt.Errorf("new endpoint svc controller: %v", err)
+	}
+
+	ctrl.Run(getStopCh(logger))
+	return fmt.Errorf("endpoint svc controller stopped")
 }
 
 func getStopCh(logger *slog.Logger) <-chan struct{} {
